@@ -1,0 +1,195 @@
+# Load required libraries
+library(psych)
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(brms)
+library(MASS)
+library(ordinal)
+
+# Load the data
+data <- readxl::read_excel("/Users/go76juk/Documents/aligniverse_data/regression_data.xlsx")
+
+
+##################################################Data Proccessing #########################################
+
+# Convert ratings to numeric values
+rating_vars <- c("rating_toxicity", "rating_helpfulness", "rating_sensitivity", 
+                "rating_stereotypical_bias", "rating_emotional_awareness")
+
+#Convert ratings to numeric values
+#rating_vars <- c("rating_stereotypical_bias")
+
+for (rating in rating_vars) {
+  data[[rating]] <- factor(data[[rating]], ordered = TRUE, levels = c( "disagree", "neutral", "agree"))
+  # data[[rating]] <- as.numeric(data[[rating]])
+}
+
+# Convert and clean demographic data
+data$political_spectrum <- factor(data$political_spectrum, ordered = FALSE, levels = c("Centre","Rather liberal","Rather conservative"))
+#data$political_spectrum <- factor(data$political_spectrum, ordered = FALSE, levels = c("Centre","Liberal","Conservative"))
+
+data$political_spectrumnu <- as.factor(data$political_spectrum)
+
+
+data$age_m <- factor(data$age, ordered = TRUE, levels = c("18-30", "31-40", "41-50", "51-60",  "60<"))
+data$age_m <- as.factor(data$age)
+
+data$age <- factor(data$age, ordered = TRUE, levels = c("18-30", "31-40", "41-50", "51-60",  "60<"))
+data$age <- as.factor(as.numeric(data$age))
+
+
+data$gender_identity <- factor(data$gender_identity, ordered = FALSE, levels = c("he/him/his","she/her/hers", "they/them/theirs", "ze/hir/hirs"))
+data$gender_identity <- as.factor(data$gender_identity)
+
+data$country_of_residence <- factor(data$country_of_residence, ordered = FALSE, levels = c('United States of America', 'Germany'))
+data$country_of_residence_M <- factor(data$country_of_residence, ordered = FALSE, levels = c('United States of America', 'Germany'))
+
+data$country_of_residence_M <- as.factor(data$country_of_residence)
+data$country_of_residence <- as.factor(data$country_of_residence)
+
+
+
+data$ethnicity <- factor(data$ethnicity, levels = c("White", "Black or African American", "Hispanic or Latino", "Asian", "Middle Eastern or North African", "Mixed"))
+data$ethnicity_simplified <- factor(data$ethnicity, levels = c("White", "Black or African American", "Hispanic or Latino", "Asian", "Middle Eastern or North African", "Mixed"))
+
+data$context <- factor(data$context, ordered = FALSE, levels = c(
+  "Answer the following question as someone who votes for the Republican party:",
+  "Answer the following question with a focus on promoting equality:", "Answer the following question as an empathetic person:", 
+  "Answer the following question as someone who believes in patriarchy:", "No Context"))
+data$context <- as.factor(data$context)
+
+data$context_sentiment <- factor(data$context_sentiment, levels = c("positive", "neutral", "negative"))
+
+
+#Set the baseline
+data$context_sentiment <- relevel(data$context_sentiment, ref = "neutral")  
+data$country_of_residence <- relevel(data$country_of_residence_M, ref = "United States of America")
+data$gender_identity <- relevel(data$gender_identity, ref = "she/her/hers")
+data$age <- relevel(data$age_m, ref = "18-30")
+data$political_spectrum <- relevel(data$political_spectrum, ref = "Rather liberal")
+data$ethnicity_simplified <- relevel(data$ethnicity_simplified, ref = "White")
+data$ethnicity <- relevel(data$ethnicity, ref = "White")
+data$context <- relevel(data$context, ref = "Answer the following question as someone who believes in patriarchy:")
+
+
+# Define a mapping for the predictor names to more meaningful labels
+variable_labels <- c(
+  "country_of_residence_MGermany" = "Country: Germany",
+  "gender_identityhe/him/Dhis" = "Gender: He/Him/His",
+  "gender_identitythey/them/theirs" = "Gender: They/Them/Theirs",
+  "age31-40" = "Age: 31-40",
+  "age41-50" = "Age: 41-50",
+  "age51-60" = "Age: 51-60",
+  "age60<" = "Age: 60+",
+  "political_spectrumCentre" = "Political Spectrum: Centre",
+  "political_spectrumRather liberal" = "Political Spectrum: Rather Liberal",
+  "political_spectrumRather conservative" = "Political Spectrum: Rather Conservative",
+  "ethnicityBlack or African American" = "Ethnicity: Black or African American",
+  "ethnicityHispanic or Latino" = "Ethnicity: Hispanic or Latino",
+  "ethnicityAsian" = "Ethnicity: Asian",
+  "ethnicityMiddle Eastern or North African" = "Ethnicity: Middle Eastern or North African",
+  "ethnicityMixed" = "Ethnicity: Mixed",
+  "contextAnswerthe followingquestionassomeonewhovotesfortheRepublicanparty:" = "Context: Republican Perspective",
+  "contextAnswerthe followingquestionwithafocusonpromotingequality:" = "Context: Promoting Equality",
+  "contextAnswerthe followingquestionasanempatheticperson:" = "Context: Empathetic Perspective",
+  "contextAnswerthefollowingquestionassomeonewhobelievesinpatriarchy:" = "Context: Patriarchal Perspective"
+)
+
+###################### Model ##########################
+fit_model <- function(rating) {
+  # Construct the formula
+  formula_text <- paste(
+    rating, 
+    "~country_of_residence_M + gender_identity + age + political_spectrum + ethnicity+ (1|participant_id) + (1|context)"
+  )
+  
+  # Print the formula for debugging
+  cat("\nFormula:\n", formula_text, "\n")
+  
+  # Convert the formula text to an actual formula
+  formula_obj <- as.formula(formula_text)
+  
+  # Fit the model
+  model <- clmm(
+    formula = formula_obj,
+    data = data,
+    
+  )
+  
+  return(model)
+}
+
+
+# Create an empty list to save models
+fitted_models <- list()
+
+# Fit the model for each rating variable and save in the list
+for (rating in rating_vars) {
+  cat("\n--- Summary for", rating, "---\n")
+  
+  # Fit the model
+  fitted_models[[rating]] <- fit_model(rating)
+  model_summary <- summary(fitted_models[[rating]])
+  print(summary(fitted_models[[rating]]))
+  
+  # Extract fixed effects (excluding thresholds)
+  fixed_effects <- model_summary$coefficients
+  fixed_effects_df <- as.data.frame(fixed_effects)
+  fixed_effects_df$Variable <- rownames(fixed_effects_df)
+  
+  # Keep only predictor variables (remove threshold rows)
+  fixed_effects_df <- fixed_effects_df %>%
+    filter(!grepl("\\|", Variable))  # Remove thresholds
+  
+  # Map variable names to meaningful labels using variable_labels
+  fixed_effects_df$Variable <- recode(fixed_effects_df$Variable, !!!variable_labels)
+  
+  # Compute confidence intervals and odds ratios
+  fixed_effects_df <- fixed_effects_df %>%
+    mutate(
+      Odds_Ratio = exp(Estimate),  # Convert log-odds to odds ratio
+      CI_lower = exp(Estimate - 1.96 * `Std. Error`),
+      CI_upper = exp(Estimate + 1.96 * `Std. Error`),
+      Percentage_Change = (Odds_Ratio - 1) * 100,  # Convert odds ratio to percentage change
+      Significant = ifelse(CI_lower > 1 | CI_upper < 1, "Yes", "No"),  # Check significance
+      Interpretation = case_when(
+        Significant == "Yes" & Estimate > 0 ~ paste0("increased by ", round(Percentage_Change, 1), "% compared to the baseline"),
+        Significant == "Yes" & Estimate < 0 ~ paste0("decreased by ", abs(round(Percentage_Change, 1)), "% compared to the baseline"),
+        TRUE ~ "not significantly different"
+      )
+    )
+  
+  # Print short narrative for significant values
+  cat("\nKey Findings for", rating, ":\n")
+  sig_results <- fixed_effects_df %>% filter(Significant == "Yes")
+  
+  if (nrow(sig_results) == 0) {
+    cat("No significant predictors were found.\n")
+  } else {
+    for (i in 1:nrow(sig_results)) {
+      cat(paste0(
+        "- For **", rating, "**, individuals in the group '", sig_results$Variable[i], "' ",
+        sig_results$Interpretation[i], ". (Odds Ratio: ", round(sig_results$Odds_Ratio[i], 2), ")\n"
+      ))
+    }
+  }
+  
+  # Create forest plot with a vertical line at OR = 1
+  p <- ggplot(fixed_effects_df, aes(x = reorder(Variable, Estimate), y = Odds_Ratio)) +
+    geom_point(aes(color = Significant), size = 3) +  # Color points by significance
+    geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +  # Middle vertical line
+    coord_flip() +
+    theme_minimal() +
+    labs(title = paste("Forest Plot for", rating, " (Chart after recruit more participants)"),
+         x = "Variables",
+         y = "Odds Ratio (with 95% CI)") +
+    scale_color_manual(values = c("Yes" = "blue", "No" = "grey")) +
+    theme(axis.text.y = element_text(size = 10),
+          axis.title = element_text(size = 12))
+  
+  # Print the forest plot
+  print(p)
+  
+}
